@@ -1,1 +1,4 @@
 .DS_Store
+join.sh
+id_rsa.pub
+.vagrant

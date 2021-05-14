@@ -1,28 +1,37 @@
+CPUS_NUMBER = 4
+CPU_LIMIT = 90
+MEMORY_LIMIT_MASTER = 2048
+MEMORY_LIMIT_WORKER = 2048
+BOX_IMAGE = "bento/ubuntu-18.04"
+KUBEADM_VERSION = "1.21.0-00"
+
 Vagrant.configure("2") do |config|
   config.vm.provision :shell, privileged: true, inline: $install_common_tools
 
-  config.vm.define :master do |master|
+  config.vm.define "k8master-vm" do |master|
     master.vm.provider :virtualbox do |vb|
-      vb.name = "master"
-      vb.memory = 2048
-      vb.cpus = 2
+      vb.name = "k8master-vm"
+      vb.memory = MEMORY_LIMIT_MASTER
+      vb.cpus = CPUS_NUMBER
+      vb.customize ["modifyvm", :id, "--cpuexecutioncap", "#{CPU_LIMIT}"]
+      vb.customize ['modifyvm', :id, '--graphicscontroller', 'vmsvga']
     end
-    master.vm.box = "ubuntu/bionic64"
-    master.disksize.size = "25GB"
-    master.vm.hostname = "master"
+    master.vm.box = BOX_IMAGE
+    master.vm.hostname = "k8master-vm"
     master.vm.network :private_network, ip: "10.0.0.10"
     master.vm.provision :shell, privileged: false, inline: $provision_master_node
   end
 
-  %w{node1 node2 node3}.each_with_index do |name, i|
+  %w{k8worker1-vm k8worker2-vm}.each_with_index do |name, i|
     config.vm.define name do |node|
       node.vm.provider "virtualbox" do |vb|
-        vb.name = "node#{i + 1}"
-        vb.memory = 2048
-        vb.cpus = 2
+        vb.name = "k8worker#{i + 1}-vm"
+        vb.memory = MEMORY_LIMIT_WORKER
+        vb.cpus = CPUS_NUMBER
+        vb.customize ["modifyvm", :id, "--cpuexecutioncap", "#{CPU_LIMIT}"]
+        vb.customize ['modifyvm', :id, '--graphicscontroller', 'vmsvga']
       end
-      node.vm.box = "ubuntu/bionic64"
-      node.disksize.size = "25GB"
+      node.vm.box = BOX_IMAGE
       node.vm.hostname = name
       node.vm.network :private_network, ip: "10.0.0.#{i + 11}"
       node.vm.provision :shell, privileged: false, inline: <<-SHELL
@@ -40,12 +49,19 @@ end
 
 
 $install_common_tools = <<-SCRIPT
-# bridged traffic to iptables is enabled for kube-router.
-cat >> /etc/ufw/sysctl.conf <<EOF
-net/bridge/bridge-nf-call-ip6tables = 1
-net/bridge/bridge-nf-call-iptables = 1
-net/bridge/bridge-nf-call-arptables = 1
+# bridged traffic to iptables is enabled for kube-router
+cat <<EOF | sudo tee /etc/modules-load.d/containerd.conf
+overlay
+br_netfilter
 EOF
+sudo modprobe overlay
+sudo modprobe br_netfilter
+cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-cri.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.ipv4.ip_forward                 = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+EOF
+sudo sysctl --system
 
 set -e
 IFNAME=$1
@@ -59,10 +75,9 @@ sed -e '/^.*ubuntu-bionic.*/d' -i /etc/hosts
 apt-get update && apt-get upgrade -y
 
 # Create local host entries
-echo "10.0.0.10 master" >> /etc/hosts
-echo "10.0.0.11 node1" >> /etc/hosts
-echo "10.0.0.12 node2" >> /etc/hosts
-echo "10.0.0.13 node3" >> /etc/hosts
+echo "10.0.0.10 k8master-vm" >> /etc/hosts
+echo "10.0.0.11 k8worker1-vm" >> /etc/hosts
+echo "10.0.0.12 k8worker2-vm" >> /etc/hosts
 
 # disable swap
 swapoff -a
@@ -72,13 +87,18 @@ sed -i '/swap/d' /etc/fstab
 export DEBIAN_FRONTEND=noninteractive
 apt-get -qq install ebtables ethtool
 apt-get -qq update
-apt-get -qq install -y docker.io apt-transport-https curl
+apt-get -qq install -y apt-transport-https curl
+apt-get -qq install -y containerd; mkdir -p /etc/containerd; sudo containerd config default | sudo tee /etc/containerd/config.toml; sudo systemctl restart containerd
+
 curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
 cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
 deb http://apt.kubernetes.io/ kubernetes-xenial main
 EOF
 apt-get -qq update
-apt-get -qq install -y kubelet kubeadm kubectl
+apt-get -qq install -y \
+  kubelet=#{KUBEADM_VERSION} \
+  kubeadm=#{KUBEADM_VERSION} \
+  kubectl=#{KUBEADM_VERSION}
 apt-mark hold kubelet kubectl kubeadm
 
 # Set external DNS
