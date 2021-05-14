@@ -2,7 +2,7 @@ CPUS_NUMBER = 4
 CPU_LIMIT = 90
 MEMORY_LIMIT_MASTER = 2048
 MEMORY_LIMIT_WORKER = 2048
-BOX_IMAGE = "bento/ubuntu-18.04"
+BOX_IMAGE = "bento/ubuntu-20.04"
 KUBEADM_VERSION = "1.21.0-00"
 
 Vagrant.configure("2") do |config|
@@ -68,8 +68,8 @@ IFNAME=$1
 ADDRESS="$(ip -4 addr show $IFNAME | grep "inet" | head -1 |awk '{print $2}' | cut -d/ -f1)"
 sed -e "s/^.*${HOSTNAME}.*/${ADDRESS} ${HOSTNAME} ${HOSTNAME}.local/" -i /etc/hosts
 
-# remove ubuntu-bionic entry
-sed -e '/^.*ubuntu-bionic.*/d' -i /etc/hosts
+# remove ubuntu-focal entry
+sed -e '/^.*ubuntu-focal.*/d' -i /etc/hosts
 
 # Patch OS
 apt-get update && apt-get upgrade -y
